@@ -1,0 +1,15 @@
+[Unit]
+Description=DHT11 Sensor Collector
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+ExecStart=/home/root/collector
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

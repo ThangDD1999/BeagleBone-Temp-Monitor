@@ -1,0 +1,15 @@
+[Unit]
+Description=Temperature Monitor HTTP Server
+After=network.target collector.service
+Wants=collector.service
+
+[Service]
+Type=simple
+ExecStart=/home/root/server
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
