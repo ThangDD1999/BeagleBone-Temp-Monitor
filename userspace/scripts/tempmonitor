@@ -17,7 +17,7 @@ LOG_FILE="/home/root/ngrok.log"
 # Use the config file we generated
 CONFIG_FILE="/home/root/.config/ngrok/ngrok.yml"
 # Your verified Authtoken
-AUTH_TOKEN="3DXTaNtvWmGD2QWj5tyqmPdClqt_mA41QpuMZkbZyMkhS8zE"
+AUTH_TOKEN="YOUR_TOKEN_HERE"
 
 case "$1" in
     start)

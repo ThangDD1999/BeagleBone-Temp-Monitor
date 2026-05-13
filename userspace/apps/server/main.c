@@ -8,36 +8,35 @@
 #include <pthread.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
-#include "../common/sensor_msg.h"
 #include <sys/resource.h>
+#include "../common/sensor_msg.h"
 
-
-#define HISTORY_SIZE 90  /* 30 phút x 3 mẫu/phút (20s/mẫu) */
+/* 30 mins x 3 samples/min (20s interval) */
+#define HISTORY_SIZE 90  
 
 typedef struct {
     sensor_msg_t data[HISTORY_SIZE];
-    int head;   /* Vị trí ghi tiếp theo */
-    int count;  /* Số lượng phần tử hiện có */
+    int head;   /* Next write position */
+    int count;  /* Current number of elements */
 } history_buffer_t;
 
 static history_buffer_t history = { .head = 0, .count = 0 };
-/* Vẫn dùng data_mutex có sẵn của bạn để bảo vệ history */
 
+/* Telegram Configuration - Replace with your actual credentials */
+#define TELEGRAM_TOKEN  "YOUR_TELEGRAM_BOT_TOKEN"
+#define TELEGRAM_CHATID "YOUR_CHAT_ID"
 
-/* Thông tin Telegram - Thắng thay token thật vào đây */
-#define TELEGRAM_TOKEN  "8669982112:AAFZ7s5ff-L-rpxiW8oMraqNKV0iwwFZZmk"
-#define TELEGRAM_CHATID "8772537568"
-
-/* Dữ liệu dùng chung giữa luồng MQ và luồng HTTP */
+/* Shared data between MQ thread and HTTP thread */
 static sensor_msg_t latest_msg;
 static pthread_mutex_t data_mutex = PTHREAD_MUTEX_INITIALIZER;
-static int has_data = 0; // Cờ kiểm tra xem đã có dữ liệu chưa
+static int has_data = 0; 
 
 static void send_telegram(float temp)
 {
     static time_t last_sent = 0;
     time_t now = time(NULL);
 
+    /* Anti-spam cooldown */
     if (difftime(now, last_sent) < COOLDOWN_SECS)
         return;
 
@@ -50,16 +49,17 @@ static void send_telegram(float temp)
         TELEGRAM_CHATID, temp, TELEGRAM_TOKEN);
 
     if (system(cmd) == 0) {
-        printf("[server] Telegram alert sent!\n");
+        printf("[server] Telegram alert sent successfully!\n");
         last_sent = now;
     } else {
-        fprintf(stderr, "[server] Telegram failed\n");
+        fprintf(stderr, "[server] Failed to send Telegram alert\n");
     }
 }
 
 static void add_to_history(sensor_msg_t msg) {
     pthread_mutex_lock(&data_mutex);
     
+    /* Circular buffer logic */
     history.data[history.head] = msg;
     history.head = (history.head + 1) % HISTORY_SIZE;
     
@@ -67,70 +67,30 @@ static void add_to_history(sensor_msg_t msg) {
         history.count++;
     }
     
-    /* Cập nhật latest_msg cũ của bạn */
+    /* Update latest message cache */
     memcpy(&latest_msg, &msg, sizeof(msg));
     has_data = 1;
     
     pthread_mutex_unlock(&data_mutex);
 }
 
-// /* ── HTTP Handler ── */
-// static void handle_client(int client_fd)
-// {
-//     char req[512];
-//     read(client_fd, req, sizeof(req) - 1);
-
-//     sensor_msg_t msg;
-//     int data_available;
-
-//     pthread_mutex_lock(&data_mutex);
-//     memcpy(&msg, &latest_msg, sizeof(msg));
-//     data_available = has_data;
-//     pthread_mutex_unlock(&data_mutex);
-
-//     char json[256];
-//     if (data_available) {
-//         char timestr[32];
-//         struct tm *tm_info = localtime(&msg.timestamp);
-//         strftime(timestr, sizeof(timestr), "%Y-%m-%d %H:%M:%S", tm_info);
-
-//         snprintf(json, sizeof(json),
-//                  "{\"status\":\"ok\",\"temperature\":%.1f,\"humidity\":%.1f,\"timestamp\":\"%s\"}",
-//                  msg.temperature, msg.humidity, timestr);
-//     } else {
-//         snprintf(json, sizeof(json), "{\"status\":\"error\",\"message\":\"No data available\"}");
-//     }
-
-//     char response[1024];
-//     snprintf(response, sizeof(response),
-//              "HTTP/1.1 200 OK\r\n"
-//              "Content-Type: application/json\r\n"
-//              "Access-Control-Allow-Origin: *\r\n"
-//              "Content-Length: %zu\r\n"
-//              "\r\n"
-//              "%s",
-//              strlen(json), json);
-
-//     write(client_fd, response, strlen(response));
-//     close(client_fd);
-// }
-
+/* ── HTTP Handler ── */
 static void handle_client(int client_fd) {
     char req[1024];
     ssize_t req_len = read(client_fd, req, sizeof(req) - 1);
     if (req_len <= 0) { close(client_fd); return; }
     req[req_len] = '\0';
 
-    /* 1. Xử lý API lấy dữ liệu lịch sử */
+    /* 1. Handle API Request for History Data */
     if (strstr(req, "GET /api/data")) {
-        char *json = malloc(1024 * 10); // Cấp phát đủ cho 90 mẫu
+        char *json = malloc(1024 * 10); 
         char temp_item[128];
         
         strcpy(json, "{\"history\": [");
         
         pthread_mutex_lock(&data_mutex);
         for (int i = 0; i < history.count; i++) {
-            /* Tính toán chỉ số thực tế trong vòng tròn (từ cũ đến mới) */
+            /* Calculate index from oldest to newest */
             int idx = (history.head - history.count + i + HISTORY_SIZE) % HISTORY_SIZE;
             sensor_msg_t *m = &history.data[idx];
             
@@ -146,18 +106,16 @@ static void handle_client(int client_fd) {
         char response[1024 * 11];
         snprintf(response, sizeof(response),
          "HTTP/1.1 200 OK\r\n"
-         "Content-Type: application/json; charset=utf-8\r\n" // Thêm charset ở đây
+         "Content-Type: application/json; charset=utf-8\r\n"
          "Access-Control-Allow-Origin: *\r\n\r\n%s", json);
         write(client_fd, response, strlen(response));
         free(json);
     } 
-    /* 2. Xử lý trả về giao diện Dashboard (index.html) */
+    /* 2. Serve Dashboard Interface (index.html) */
     else {
-        /* Bạn có thể đọc file index.html từ disk hoặc nhúng string tại đây */
         const char *html_header = "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n\r\n";
         write(client_fd, html_header, strlen(html_header));
         
-        // Gợi ý: Gửi file index.html (Thắng cần tạo file này cùng thư mục)
         FILE *f = fopen("index.html", "r");
         if (f) {
             char buf[1024];
@@ -165,14 +123,14 @@ static void handle_client(int client_fd) {
             while ((n = fread(buf, 1, sizeof(buf), f)) > 0) write(client_fd, buf, n);
             fclose(f);
         } else {
-            const char *error = "<h1>404 Dashboard Not Found</h1><p>Vui lòng upload index.html len BBB</p>";
+            const char *error = "<h1>404 Dashboard Not Found</h1><p>Please upload index.html to BeagleBone Black</p>";
             write(client_fd, error, strlen(error));
         }
     }
     close(client_fd);
 }
 
-/* ── Luồng HTTP Server ── */
+/* ── HTTP Server Thread ── */
 static void *http_thread(void *arg)
 {
     int server_fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -186,7 +144,7 @@ static void *http_thread(void *arg)
     };
 
     if (bind(server_fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
-        perror("bind failed");
+        perror("[server] Bind failed");
         exit(EXIT_FAILURE);
     }
     
@@ -201,7 +159,7 @@ static void *http_thread(void *arg)
     return NULL;
 }
 
-/* ── Luồng nhận Message Queue ── */
+/* ── Message Queue Consumer Thread ── */
 static void *mq_thread(void *arg)
 {
     struct mq_attr attr = {
@@ -211,28 +169,27 @@ static void *mq_thread(void *arg)
         .mq_curmsgs = 0
     };
 
-    // Mở queue với thuộc tính khớp hoàn toàn với Collector
+    /* Open queue with attributes matching the Collector */
     mqd_t mq = mq_open(MQ_NAME, O_RDONLY | O_CREAT, 0644, &attr);
     if (mq == (mqd_t)-1) {
-        perror("mq_open");
+        perror("[server] mq_open failed");
         exit(EXIT_FAILURE);
     }
 
-    printf("[server] waiting for data from MQ: %s\n", MQ_NAME);
+    printf("[server] Waiting for data on MQ: %s\n", MQ_NAME);
     fflush(stdout);
 
     while (1) {
         sensor_msg_t msg;
-        // mq_receive sẽ block ở đây cho đến khi có dữ liệu mới
+        /* Block until new data arrives */
         ssize_t n = mq_receive(mq, (char *)&msg, MQ_MSG_SIZE, NULL);
         
         if (n >= 0) {
-            /* Thêm timestamp */
             char timestr[32];
             struct tm *tm_info = localtime(&msg.timestamp);
             strftime(timestr, sizeof(timestr), "%Y-%m-%d %H:%M:%S", tm_info);
 
-            printf("[server] %s TEMP=%.1fC HUM=%.1f%%\n", timestr, msg.temperature, msg.humidity);
+            printf("[server] %s | TEMP: %.1fC | HUM: %.1f%%\n", timestr, msg.temperature, msg.humidity);
             fflush(stdout);
 
             add_to_history(msg);
@@ -240,7 +197,7 @@ static void *mq_thread(void *arg)
             if (msg.temperature >= ALERT_THRESHOLD) {
                 send_telegram(msg.temperature);
             }
-            usleep(10000); // Ngủ 10ms
+            usleep(10000); /* 10ms sleep */
         }
     }
     return NULL;
@@ -248,18 +205,17 @@ static void *mq_thread(void *arg)
 
 int main(void)
 {
-    /* Hạ độ ưu tiên của Server (10) */
+    /* Set lower priority for Server process (Nice value: 10) */
     setpriority(PRIO_PROCESS, 0, 10);
 
-    printf("[server] starting with low priority...\n");
-
-    printf("[server] initializing...\n");
+    printf("[server] Starting system with optimized priority...\n");
     memset(&latest_msg, 0, sizeof(latest_msg));
 
     pthread_t tid1, tid2;
     pthread_create(&tid1, NULL, http_thread, NULL);
     pthread_create(&tid2, NULL, mq_thread, NULL);
 
+    /* Keep threads running */
     pthread_join(tid1, NULL);
     pthread_join(tid2, NULL);
 
