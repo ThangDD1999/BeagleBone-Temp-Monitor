@@ -52,7 +52,7 @@ BBB-Temp-Monitor/
 
 | Web Dashboard | Telegram Alert |
 |:---:|:---:|
-| ![Web Dashboard](images/dashboard.png) | ![Telegram Alert](images/telegram.png) |
+| ![Web Dashboard](images/Web_Dashboard.webp) | ![Telegram Alert](images/Telegram_Alert.webp) |
 
 *(Note: Replace the image paths with your actual screenshot files in the `images/` directory)*
 
