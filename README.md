@@ -54,7 +54,6 @@ BBB-Temp-Monitor/
 |:---:|:---:|
 | ![Web Dashboard](images/Web_Dashboard.webp) | ![Telegram Alert](images/Telegram_Alert.webp) |
 
-*(Note: Replace the image paths with your actual screenshot files in the `images/` directory)*
 
 ---
 
